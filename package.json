@@ -10,9 +10,9 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.116.0",
     "jszip": "^3.10.1",
     "next": "^15.5.23",
+    "openai": "^7.4.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "yaml": "^2.6.1"

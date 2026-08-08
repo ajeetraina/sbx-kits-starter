@@ -10,8 +10,8 @@ name: Deploy (Vercel)
 #        (token: vercel.com/account/tokens; the IDs are in .vercel/project.json
 #         after running `vercel link`, or in the Vercel project settings)
 #   2. In the Vercel project (Settings → Environment Variables), add
-#      ANTHROPIC_API_KEY (required) and GITHUB_TOKEN (optional) for Production.
-#      `vercel pull` brings those into the build automatically.
+#      OPENAI_API_KEY (required), plus optional OPENAI_BASE_URL / OPENAI_MODEL
+#      and GITHUB_TOKEN, for Production. `vercel pull` brings those into the build.
 #
 # You can also trigger it manually from the Actions tab (workflow_dispatch).
 

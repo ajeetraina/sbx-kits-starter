@@ -100,7 +100,7 @@ function Footer() {
         <a className="text-sbx-accent2 hover:underline" href="https://github.com/docker/sbx-kits-contrib" target="_blank" rel="noreferrer">
           docker/sbx-kits-contrib
         </a>
-        . AI generation uses Claude and needs <code className="text-sbx-text">ANTHROPIC_API_KEY</code>; repo import
+        . AI generation uses an OpenAI-compatible model and needs <code className="text-sbx-text">OPENAI_API_KEY</code>; repo import
         works without a key but a <code className="text-sbx-text">GITHUB_TOKEN</code> raises the rate limit.
       </p>
     </footer>

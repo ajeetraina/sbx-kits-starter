@@ -1,108 +1,42 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import { fetchRepoContext, type RepoContext } from "@/lib/github";
 import { emptyKit, type KitSpec } from "@/lib/schema-v2";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MODEL = "claude-opus-4-8";
-
 /**
- * JSON schema constraining Claude's output to a schema-v2 kit. Structured outputs
- * require additionalProperties:false on every object. We keep the shape flat and
- * merge the result into a full KitSpec server-side.
+ * The kit generator's AI backend. Uses any OpenAI-compatible chat endpoint:
+ *   OPENAI_API_KEY   (required)
+ *   OPENAI_BASE_URL  (optional — point at Azure OpenAI, a local server, or a
+ *                     Docker Model Runner, e.g. http://localhost:12434/engines/v1)
+ *   OPENAI_MODEL     (optional — defaults to gpt-4o)
+ *
+ * We use JSON mode (response_format: json_object) for the widest compatibility
+ * across providers, and describe the target shape in the prompt. The result is
+ * merged defensively into a full KitSpec, so a missing field never breaks it.
  */
-const KIT_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    kind: { type: "string", enum: ["mixin", "sandbox"] },
-    name: {
-      type: "string",
-      description: "lowercase-with-hyphens, 1-64 chars, matching ^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$",
-    },
-    displayName: { type: "string" },
-    description: { type: "string" },
-    licenses: { type: "array", items: { type: "string" } },
-    networkAllow: {
-      type: "array",
-      items: { type: "string" },
-      description: "hostnames/domains the sandbox may reach, e.g. pypi.org, api.example.com, host.docker.internal:4000",
-    },
-    environment: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          key: { type: "string" },
-          value: { type: "string" },
-        },
-        required: ["key", "value"],
-      },
-    },
-    install: {
-      type: "array",
-      description: "one-time install commands run via sh -c at kit creation",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          command: { type: "string" },
-          user: { type: "string", description: '"1000" for the agent user, "0" for root' },
-          description: { type: "string" },
-        },
-        required: ["command"],
-      },
-    },
-    files: {
-      type: "array",
-      description: "config files written into the sandbox at startup",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          path: { type: "string", description: "absolute path, e.g. /home/agent/.config/tool.json" },
-          content: { type: "string" },
-          mode: { type: "string" },
-          onlyIfMissing: { type: "boolean" },
-          description: { type: "string" },
-        },
-        required: ["path", "content"],
-      },
-    },
-    credentials: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          service: { type: "string" },
-          description: { type: "string" },
-          required: { type: "boolean" },
-          envVarName: { type: "string", description: "environment variable the key is exposed as" },
-          injectDomain: { type: "string", description: "domain the key is injected for (must be in networkAllow)" },
-          scheme: { type: "string", enum: ["bearer", "basic", ""] },
-        },
-        required: ["service"],
-      },
-    },
-    agentInstructions: {
-      type: "string",
-      description: "Markdown telling the agent what this kit provides and how to use it. Written for the model, not humans.",
-    },
-    sandboxImage: {
-      type: "string",
-      description: "only for kind=sandbox: base image reference",
-    },
-    notes: {
-      type: "string",
-      description: "short note to the user about assumptions made or what to review",
-    },
-  },
-  required: ["kind", "name", "description", "agentInstructions"],
-} as const;
+const DEFAULT_MODEL = "gpt-4o";
+
+/** The target shape, described for the model (JSON mode doesn't enforce a schema). */
+const KIT_SHAPE = `Return a single JSON object with these fields:
+{
+  "kind": "mixin" | "sandbox",              // required — prefer "mixin"
+  "name": string,                            // required — lowercase-with-hyphens, 1-64 chars
+  "displayName": string,
+  "description": string,                     // required
+  "licenses": string[],                      // SPDX identifiers
+  "networkAllow": string[],                  // ONLY the exact hosts needed (api domains, package registries, host.docker.internal:PORT)
+  "environment": [{ "key": string, "value": string }],
+  "install": [{ "command": string, "user": string, "description": string }],   // user "1000" for agent, "0" for root
+  "files": [{ "path": string, "content": string, "mode": string, "onlyIfMissing": boolean, "description": string }],
+  "credentials": [{ "service": string, "description": string, "required": boolean, "envVarName": string, "injectDomain": string, "scheme": "bearer" | "basic" }],
+  "agentInstructions": string,               // required — Markdown addressed to the coding agent
+  "sandboxImage": string,                    // only for kind "sandbox"
+  "notes": string                            // short note about assumptions to review
+}
+Include only the fields that apply. Every injectDomain MUST also appear in networkAllow.`;
 
 interface GeneratedKit {
   kind: "mixin" | "sandbox";
@@ -128,34 +62,26 @@ interface GeneratedKit {
 }
 
 function systemPrompt(): string {
-  return `You are an expert author of Docker Sandboxes (sbx) kits, schema version 2.
+  return `You are an expert author of Docker Sandboxes (sbx) kits, schema version 2. You reply with a single JSON object and nothing else.
 
 An sbx kit is a declarative artifact that extends a sandbox coding agent with a product's capabilities. A "mixin" adds capabilities (packages, env vars, network access, credentials, agent instructions) onto any base agent; a "sandbox" ships its own base image.
 
-Schema v2 shape you are producing (via the structured output tool):
-- kind: "mixin" (default — prefer this) or "sandbox".
-- name: lowercase-with-hyphens, derived from the product.
-- description: one or two sentences on what the kit adds and how it's wired.
-- networkAllow: ONLY the exact hosts the product needs — its API domain(s), package registries needed to install it (pypi.org + files.pythonhosted.org for Python; registry.npmjs.org for Node), and host.docker.internal:PORT if it talks to a host service. Never allow-all.
-- environment: variables the SDK/tool reads (e.g. OPENAI_BASE_URL, <PRODUCT>_API_KEY). Do NOT hardcode real secrets — use placeholder values or leave secrets to credentials.
-- install: the minimal commands to install the product's library. Prefer pinning a version. Use user "1000" (the agent user) for pip/npm user installs; add --break-system-packages for pip. Keep it to what's necessary.
-- files: config files the product needs, written to absolute paths under /home/agent. Use onlyIfMissing: true for editable config.
-- credentials: if the product needs a real API key, declare it here with envVarName and injectDomain (which MUST also be in networkAllow), scheme "bearer" typically. This keeps real keys out of the spec.
-- agentInstructions: concise Markdown, addressed to the coding agent, explaining what is installed, how it's wired, and how to use it. This is the single most valuable field — make it accurate and practical.
+${KIT_SHAPE}
 
 Design principles, mirroring the mem0 and litellm reference kits:
-- Prefer local Docker Model Runner (host.docker.internal:12434, OPENAI_BASE_URL=http://host.docker.internal:12434/engines/v1, OPENAI_API_KEY=dmr) or a host gateway over embedding cloud credentials, when the product is an LLM tool.
-- Least privilege: allow only the domains actually required.
-- Never invent capabilities the product doesn't have. Base everything on the provided repository context.
-
-Produce a correct, minimal, working kit. Note any assumptions in "notes".`;
+- networkAllow: least privilege — only the product's own API domain(s), the package registries needed to install it (pypi.org + files.pythonhosted.org for Python; registry.npmjs.org for Node), and host.docker.internal:PORT if it talks to a host service. Never allow-all.
+- Prefer a local Docker Model Runner (host.docker.internal:12434, OPENAI_BASE_URL=http://host.docker.internal:12434/engines/v1, OPENAI_API_KEY=dmr) or a host gateway over embedding cloud credentials, when the product is an LLM tool.
+- install: the minimal commands to install the product's library, pinned where possible. Use user "1000" for pip/npm user installs; add --break-system-packages for pip.
+- Do NOT hardcode real secrets. If the product needs a real API key, declare it under credentials with envVarName + injectDomain (which must be in networkAllow), scheme "bearer".
+- agentInstructions is the most valuable field: concise, accurate Markdown telling the agent what is installed, how it's wired, and how to use it.
+- Never invent capabilities the product doesn't have — base everything on the provided repository context. Note assumptions in "notes".`;
 }
 
 function userPrompt(ctx: RepoContext): string {
   const manifests = ctx.manifests
     .map((m) => `### ${m.path}\n\`\`\`\n${m.content}\n\`\`\``)
     .join("\n\n");
-  return `Generate a schema-v2 kit for this product.
+  return `Generate a schema-v2 kit as JSON for this product.
 
 Repository: ${ctx.url}
 Name: ${ctx.owner}/${ctx.repo}
@@ -171,7 +97,7 @@ ${ctx.readme || "(no README found)"}
 ${manifests || "(none found)"}`;
 }
 
-/** Merge the model's structured output into a full KitSpec. */
+/** Merge the model's JSON into a full KitSpec. */
 function toKitSpec(g: GeneratedKit, ctx: RepoContext): KitSpec {
   const kit = emptyKit(g.kind === "sandbox" ? "sandbox" : "mixin");
   kit.name = (g.name || ctx.repo).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
@@ -199,9 +125,7 @@ function toKitSpec(g: GeneratedKit, ctx: RepoContext): KitSpec {
     apiKey: c.envVarName
       ? {
           name: c.envVarName,
-          inject: c.injectDomain
-            ? [{ domain: c.injectDomain, scheme: c.scheme || "bearer" }]
-            : [],
+          inject: c.injectDomain ? [{ domain: c.injectDomain, scheme: c.scheme || "bearer" }] : [],
         }
       : undefined,
   }));
@@ -213,9 +137,9 @@ function toKitSpec(g: GeneratedKit, ctx: RepoContext): KitSpec {
 }
 
 export async function POST(req: NextRequest) {
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.OPENAI_API_KEY) {
     return NextResponse.json(
-      { error: "ANTHROPIC_API_KEY is not set on the server. Add it to .env and restart." },
+      { error: "OPENAI_API_KEY is not set on the server. Add it to .env and restart." },
       { status: 501 },
     );
   }
@@ -237,35 +161,35 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const client = new Anthropic();
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || undefined,
+  });
+
   try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      thinking: { type: "adaptive" },
-      output_config: {
-        effort: "high",
-        format: { type: "json_schema", schema: KIT_JSON_SCHEMA },
-      },
-      system: systemPrompt(),
-      messages: [{ role: "user", content: userPrompt(ctx) }],
-    } as Anthropic.MessageCreateParamsNonStreaming);
+    const completion = await client.chat.completions.create({
+      model: process.env.OPENAI_MODEL || DEFAULT_MODEL,
+      max_tokens: 4000,
+      temperature: 0.2,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt() },
+        { role: "user", content: userPrompt(ctx) },
+      ],
+    });
 
-    if (response.stop_reason === "refusal") {
-      return NextResponse.json(
-        { error: "The model declined to generate a kit for this repository." },
-        { status: 422 },
-      );
-    }
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    if (!textBlock || textBlock.type !== "text") {
+    const text = completion.choices[0]?.message?.content;
+    if (!text) {
       return NextResponse.json({ error: "No content returned by the model." }, { status: 502 });
     }
 
-    const generated = JSON.parse(textBlock.text) as GeneratedKit;
+    const generated = JSON.parse(text) as GeneratedKit;
     const kit = toKitSpec(generated, ctx);
-    return NextResponse.json({ kit, notes: generated.notes ?? null, context: { url: ctx.url, name: `${ctx.owner}/${ctx.repo}` } });
+    return NextResponse.json({
+      kit,
+      notes: generated.notes ?? null,
+      context: { url: ctx.url, name: `${ctx.owner}/${ctx.repo}` },
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Generation failed.";
     return NextResponse.json({ error: message }, { status: 502 });

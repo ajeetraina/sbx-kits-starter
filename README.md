@@ -21,7 +21,8 @@ capabilities. This portal produces schema-v2 kits:
 ## Features
 
 - **Repo → kit (AI):** paste `owner/repo` or a `github.com` URL. The server reads the
-  README + package manifests and Claude ([`claude-opus-4-8`](https://www.anthropic.com))
+  README + package manifests and an OpenAI-compatible model (default `gpt-4o`,
+  configurable via `OPENAI_BASE_URL` / `OPENAI_MODEL`)
   generates a schema-v2 kit — name, description, least-privilege network allow-list,
   environment, install commands, credentials, and agent instructions.
 - **Guided editor** for every v2 block: basics, sandbox image/resources,
@@ -41,15 +42,17 @@ capabilities. This portal produces schema-v2 kits:
 ```sh
 npm install
 
-# AI generation needs an Anthropic key; repo import optionally uses a GitHub token
+# AI generation needs an OpenAI-compatible key; repo import optionally uses a GitHub token
 cp .env.example .env      # then edit .env
-#   ANTHROPIC_API_KEY=sk-ant-...
+#   OPENAI_API_KEY=sk-...
+#   OPENAI_BASE_URL=...    (optional — Azure / local / Docker Model Runner)
+#   OPENAI_MODEL=gpt-4o    (optional)
 #   GITHUB_TOKEN=ghp_...   (optional)
 
 npm run dev               # http://localhost:3000
 ```
 
-Without `ANTHROPIC_API_KEY` the AI "Generate kit" button returns a clear error, but the
+Without `OPENAI_API_KEY` the AI "Generate kit" button returns a clear error, but the
 templates and the whole editor/preview/export flow work fully offline.
 
 ## Deploy
@@ -59,7 +62,8 @@ needs a Node host — GitHub Pages/Actions can't serve the running app. **Vercel
 native fit:
 
 - **Dashboard:** import the repo at [vercel.com/new](https://vercel.com/new), add
-  `ANTHROPIC_API_KEY` (and optional `GITHUB_TOKEN`) as Production env vars, deploy.
+  `OPENAI_API_KEY` (and optional `OPENAI_BASE_URL` / `OPENAI_MODEL` / `GITHUB_TOKEN`)
+  as Production env vars, deploy.
 - **From CI:** `.github/workflows/deploy.yml` deploys to Vercel on push to `main`. It's
   dormant until you set the repo variable `ENABLE_VERCEL_DEPLOY=true` and the secrets
   `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (see the comments in that file).

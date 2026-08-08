@@ -26,5 +26,5 @@ jobs:
       - name: Build
         # A dummy key lets the build run; the app only needs a real key at runtime.
         env:
-          ANTHROPIC_API_KEY: dummy-build-key
+          OPENAI_API_KEY: dummy-build-key
         run: npm run build
