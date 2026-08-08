@@ -1,0 +1,48 @@
+name: Deploy (Vercel)
+
+# Deploys the portal to Vercel on push to main.
+#
+# Dormant by default: the job is skipped until you opt in, so it never shows a
+# failing run before you've configured Vercel. To enable:
+#   1. Repo → Settings → Secrets and variables → Actions
+#      - Variables: add  ENABLE_VERCEL_DEPLOY = true
+#      - Secrets:   add  VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+#        (token: vercel.com/account/tokens; the IDs are in .vercel/project.json
+#         after running `vercel link`, or in the Vercel project settings)
+#   2. In the Vercel project (Settings → Environment Variables), add
+#      ANTHROPIC_API_KEY (required) and GITHUB_TOKEN (optional) for Production.
+#      `vercel pull` brings those into the build automatically.
+#
+# You can also trigger it manually from the Actions tab (workflow_dispatch).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: ${{ vars.ENABLE_VERCEL_DEPLOY == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Vercel CLI
+        run: npm i -g vercel@latest
+
+      - name: Pull Vercel project settings (incl. env vars)
+        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build
+        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy to production
+        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}

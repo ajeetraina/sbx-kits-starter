@@ -52,6 +52,20 @@ npm run dev               # http://localhost:3000
 Without `ANTHROPIC_API_KEY` the AI "Generate kit" button returns a clear error, but the
 templates and the whole editor/preview/export flow work fully offline.
 
+## Deploy
+
+The portal has server-side API routes (they call Claude and GitHub with secrets), so it
+needs a Node host — GitHub Pages/Actions can't serve the running app. **Vercel** is the
+native fit:
+
+- **Dashboard:** import the repo at [vercel.com/new](https://vercel.com/new), add
+  `ANTHROPIC_API_KEY` (and optional `GITHUB_TOKEN`) as Production env vars, deploy.
+- **From CI:** `.github/workflows/deploy.yml` deploys to Vercel on push to `main`. It's
+  dormant until you set the repo variable `ENABLE_VERCEL_DEPLOY=true` and the secrets
+  `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` (see the comments in that file).
+
+CI (`.github/workflows/ci.yml`) type-checks and builds on every push/PR.
+
 ## How the schema maps (v1 → v2)
 
 The mem0 kit is schema **v1**; litellm is **v2**. This portal always emits v2, which
