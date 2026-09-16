@@ -1,4 +1,4 @@
-# sbx kit — starter template (schema v2)
+# sbx kit starter template (schema v2)
 #
 # This is a MIXIN: it composes onto any base agent with `--kit`. Edit the fields
 # below to describe your product, then publish (see README.md / PUBLISHING.md).
@@ -42,7 +42,7 @@ setup:
   # files: content dropped into the sandbox. Prefer the files/ tree for anything large.
   files: []
 
-# Credentials the proxy injects for you — the secret is scoped to the domains
+# Credentials the proxy injects for you. The secret is scoped to the domains
 # below and never has to be handled by the agent. Delete this block if the kit
 # needs no cloud credentials (local-model kits usually don't).
 #
@@ -61,6 +61,6 @@ agentInstructions:
   content: |
     ## My Kit
 
-    Describe here, in the agent's voice, what is now available and how to use it —
+    Describe here, in the agent's voice, what is now available and how to use it:
     which packages are installed, which endpoints/keys are pre-wired, and any
     conventions the agent should follow.
