@@ -61,12 +61,25 @@ ${kindLine}
 ## Use it
 
 \`\`\`sh
-# Mixin: compose onto a base agent
-sbx run --kit oci://<your-registry>/${name}:1 -- claude
-
-# or from a local checkout
+# From a local checkout
 sbx run --kit ./ -- claude
+
+# Published to a registry — consumers reference by digest, not by tag
+sbx run --kit oci://docker.io/<your-user>/${name}@sha256:<digest> -- claude
 \`\`\`
+
+## Publish it
+
+\`\`\`sh
+docker login                                   # Docker Hub (or your registry)
+./scripts/push-kit.sh <your-docker-hub-user>   # -> docker.io/<user>/${name}:latest
+./scripts/push-kit.sh <your-docker-hub-user> 1.0
+\`\`\`
+
+The script prints the \`sbx kit inspect\` command to resolve the published digest,
+which is what consumers pin to. Tagging \`v*\` also publishes via
+\`.github/workflows/publish.yml\` (set the \`DOCKERHUB_USERNAME\`/\`DOCKERHUB_TOKEN\`
+secrets).
 
 ## What it does
 
@@ -83,8 +96,8 @@ ${
 
 - \`spec.yaml\` — the kit definition (schema v2)
 - \`files/\` — content injected into the sandbox (\`home/\` → \`/home/agent/\`)
-- \`scripts/push-kit.sh\` — publish to an OCI registry
-- \`.github/workflows/publish.yml\` — publish on tag
+- \`scripts/push-kit.sh\` — publish to Docker Hub (or any OCI registry)
+- \`.github/workflows/publish.yml\` — publish on \`v*\` tag
 
 ## Author
 
@@ -110,29 +123,59 @@ jobs:
         run: |
           echo "Install the sbx CLI here (see docker/sbx-kits-contrib for the current install command)."
 
+      # Publishes to Docker Hub by default using the DOCKERHUB_USERNAME /
+      # DOCKERHUB_TOKEN secrets. To use a different registry (e.g. ghcr.io),
+      # set the repo variables REGISTRY and REGISTRY_USER.
       - name: Log in to registry
-        run: echo "\${{ secrets.REGISTRY_TOKEN }}" | docker login \${{ vars.REGISTRY }} -u \${{ vars.REGISTRY_USER }} --password-stdin
+        run: |
+          echo "\${{ secrets.DOCKERHUB_TOKEN }}" \\
+            | docker login "\${{ vars.REGISTRY || 'docker.io' }}" \\
+                -u "\${{ vars.REGISTRY_USER || secrets.DOCKERHUB_USERNAME }}" --password-stdin
 
       - name: Push ${name}
-        run: ./scripts/push-kit.sh "\${{ vars.REGISTRY }}/${name}" "\${GITHUB_REF_NAME#v}"
+        run: |
+          if [ -n "\${{ vars.REGISTRY }}" ]; then
+            TARGET="\${{ vars.REGISTRY }}/\${{ vars.REGISTRY_USER }}/${name}"
+          else
+            TARGET="\${{ secrets.DOCKERHUB_USERNAME }}"
+          fi
+          ./scripts/push-kit.sh "\$TARGET" "\${GITHUB_REF_NAME#v}"
 `;
 }
 
 function pushScript(name: string): string {
   return `#!/usr/bin/env bash
-# Publish this kit to an OCI registry.
+# Publish this kit to a container registry as an OCI artifact.
+# Docker Hub is the default; any OCI registry (GHCR, ECR, ...) works too.
 #
-#   ./scripts/push-kit.sh <registry>/${name} <version>
+#   ./scripts/push-kit.sh <docker-hub-user>          # -> docker.io/<user>/${name}:latest
+#   ./scripts/push-kit.sh <docker-hub-user> 1.0      # -> docker.io/<user>/${name}:1.0
+#   ./scripts/push-kit.sh ghcr.io/org/${name} 1.0    # full OCI ref (anything with a '/')
 #
-# Requires the sbx CLI (see github.com/docker/sbx-kits-contrib for install + the
-# exact 'sbx kit push' invocation for your version).
+# Requires:
+#   - the sbx CLI on PATH (see github.com/docker/sbx-kits-contrib to install)
+#   - a prior 'docker login' — for Docker Hub: 'docker login -u <user>'.
+#     'sbx kit push' reuses your existing docker credentials.
 set -euo pipefail
 
-REF="\${1:?usage: push-kit.sh <registry>/${name} <version>}"
+NAME="${name}"
+TARGET="\${1:?usage: push-kit.sh <docker-hub-user | full-oci-ref> [version]}"
 VERSION="\${2:-latest}"
 
-echo "Publishing ${name} -> \${REF}:\${VERSION}"
-# sbx kit push --tag "\${REF}:\${VERSION}" .
-echo "Uncomment the 'sbx kit push' line above once the sbx CLI is installed."
+# A TARGET containing '/' is treated as a full registry path and used verbatim;
+# otherwise it's a Docker Hub username and we build docker.io/<user>/<name>.
+if [[ "\$TARGET" == */* ]]; then
+  REF="\$TARGET"
+else
+  REF="docker.io/\${TARGET}/\${NAME}"
+fi
+
+echo "Publishing \${NAME} -> \${REF}:\${VERSION}"
+sbx kit push . "\${REF}:\${VERSION}"
+
+echo
+echo "Pushed. Consumers must reference the kit by digest, not by tag:"
+echo "  sbx kit inspect \${REF}:\${VERSION}   # resolve the sha256 digest"
+echo "  sbx run --kit oci://\${REF}@sha256:<digest> -- claude"
 `;
 }
