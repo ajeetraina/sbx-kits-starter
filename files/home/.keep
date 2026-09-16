@@ -1,0 +1,3 @@
+# Files placed under files/home/ are copied into /home/agent/ in the sandbox.
+# (Use files/root/ for content that must land under / as root.)
+# Delete this .keep once you add real content.
