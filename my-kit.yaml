@@ -1,0 +1,71 @@
+# syntax=docker/sandbox-kit:3
+#
+# v3 kit descriptor (the companion of my-kit.dockerfile, found by stem).
+# This is the v3 equivalent of the repo's root spec.yaml (schema v2).
+# Full grammar: github.com/docker/sandbox-kit-spec (docs/spec/SPEC-v3.md).
+
+schemaVersion: "3"
+kind: mixin
+
+displayName: My Kit
+description: >-
+  One line on what this kit adds to an agent. Keep it grounded in what your
+  product actually does.
+sourceUrl: https://github.com/<you>/<repo>
+licenses: [Apache-2.0]
+
+# Pin the tool once. This value drives the install (via buildArg), the matchable
+# provide, org.opencontainers.image.version and the published tag.
+version: "${{ kit.args.version }}"
+
+args:
+  version:
+    default: "1.0.0"
+    pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
+    description: Version of <your-package> to install
+    buildArg: PKG_VERSION
+
+# What this kit offers to the composition, matchable by other kits.
+# A pinned provide is a claim about content: the dockerfile enforces it.
+provides: ["my-kit@${{ kit.args.version }}"]
+
+# No `requires:` — this overlay bundles its own interpreter and assumes only the
+# platform floor (bash/sh, curl, git, CA store, agent uid 1000). Requiring
+# anything here is a hard precondition on EVERY base, so leave it empty unless
+# something must already be present for the kit to work at all.
+
+capabilities:
+  # v2 permissions.network.allow -> a phase-scoped network policy.
+  # These hosts are reached by the BUILD (pip/uv install), so they go in
+  # `install`. If the running agent also needs a host, add a `runtime:` block.
+  - type: com.docker.sandbox/network-policy@1
+    config:
+      install:
+        allow:
+          - pypi.org
+          - files.pythonhosted.org
+          - github.com
+          - astral.sh          # uv installer
+          - objects.githubusercontent.com
+
+  # v2 agentInstructions.content -> agent-context capability. Static body lives
+  # in a file; use inline `content:` only when it interpolates an arg.
+  - type: com.docker.sandbox/agent-context@1
+    config:
+      contentFile: ./my-kit-context.md
+
+  # v2 credentials[] -> credential capability. Delete this block if the kit
+  # needs no cloud credentials (local-model kits usually don't). Entries are
+  # required by default, so mark optional unless the kit can't run without it.
+  # Every inject[].domain must ALSO appear in a matching network-policy phase.
+  #
+  # - type: com.docker.sandbox/credential@1
+  #   config:
+  #     - service: my-service
+  #       description: API key for <service>
+  #       optional: true
+  #       apiKey:
+  #         name: MY_SERVICE_API_KEY
+  #         inject:
+  #           - domain: api.example.com
+  #             scheme: bearer

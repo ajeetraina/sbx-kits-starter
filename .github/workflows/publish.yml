@@ -1,6 +1,8 @@
 name: Publish kit
 
-# Publishes this kit to a registry when you push a version tag, e.g. `git tag v1.0 && git push --tags`.
+# Publishes this v3 kit when you push a version tag, e.g. `git tag v1.0.0 && git push --tags`.
+# In v3, publishing is just `docker buildx build --push` — the frontend from the
+# `# syntax=docker/sandbox-kit:3` line writes the kit annotations.
 
 on:
   push:
@@ -13,23 +15,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install sbx
-        run: |
-          echo "Install the sbx CLI here (see docker/sbx-kits-contrib for the current install command)."
+      # Needed to build linux/amd64,linux/arm64 in one invocation.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
 
       # Publishes to Docker Hub by default using the DOCKERHUB_USERNAME /
-      # DOCKERHUB_TOKEN secrets. To use a different registry (e.g. ghcr.io),
-      # set the repo variables REGISTRY and REGISTRY_USER.
+      # DOCKERHUB_TOKEN secrets. For a different registry (e.g. ghcr.io), set the
+      # repo variables REGISTRY and REGISTRY_USER.
       - name: Log in to registry
-        run: |
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" \
-            | docker login "${{ vars.REGISTRY || 'docker.io' }}" \
-                -u "${{ vars.REGISTRY_USER || secrets.DOCKERHUB_USERNAME }}" --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ vars.REGISTRY || 'docker.io' }}
+          username: ${{ vars.REGISTRY_USER || secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Push kit
         run: |
           if [ -n "${{ vars.REGISTRY }}" ]; then
-            TARGET="${{ vars.REGISTRY }}/${{ vars.REGISTRY_USER }}/$(grep -E '^name:' spec.yaml | head -1 | sed -E 's/^name:[[:space:]]*//')"
+            TARGET="${{ vars.REGISTRY }}/${{ vars.REGISTRY_USER }}/my-kit"
           else
             TARGET="${{ secrets.DOCKERHUB_USERNAME }}"
           fi
